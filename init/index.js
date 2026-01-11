@@ -1,24 +1,40 @@
-const mongoose=require("mongoose");
-const initData=require("./data.js");
+const mongoose = require("mongoose");
+const initData = require("./data.js");
 const Listing = require("../models/listing.js");
 
-const MONGO_URL="mongodb://127.0.0.1:27017/wanderLust";
-
+if (process.env.NODE_ENV != "production") {
+  require('dotenv').config();
+}
+const MONGO_URL = process.env.DB_URL;
 
 main()
-.then(()=>{
+  .then(() => {
     console.log("connected to db");
-})
-.catch((err)=>{
-    console.log(err);
-});
-async function main(){
-    await mongoose.connect(MONGO_URL);
+    return initDB();
+  })
+  .catch(err => console.log(JSON.stringify(err, null, 2)));
+
+async function main() {
+  await mongoose.connect(MONGO_URL, { dbName: 'wanderLust' });
 }
 
-const  initDB =async ()=>{
-     await Listing.deleteMany({});
-     await Listing.insertMany(initData.data);
-     console.log("data was initalized")
-}
-initDB();
+const User = require("../models/user.js");
+
+const initDB = async () => {
+  await Listing.deleteMany({});
+
+  let user = await User.findOne({ username: "testuser" });
+  if (!user) {
+    console.log("Test user not found, creating one...");
+    const newUser = new User({ email: "test@test.com", username: "testuser" });
+    user = await User.register(newUser, "password");
+  }
+
+  const fixedData = initData.data.map(obj => ({
+    ...obj,
+    owner: user._id,
+  }));
+
+  await Listing.insertMany(fixedData);
+  console.log("data was initialized");
+};

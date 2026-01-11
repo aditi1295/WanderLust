@@ -1,88 +1,91 @@
-const express=require("express");
-const router=express.Router();
-const listing=require("../models/listing.js");
-const wrapAsync=require("../utils/wrapasync.js");
-const ExpressError=require("../utils/ExpressError.js");
-const {listingSchema}=require("../schema.js");
-const {isLoggedIn}=require("../middleware.js");
+const express = require("express");
+const router = express.Router();
+const listing = require("../models/listing.js");
+const wrapAsync = require("../utils/wrapasync.js");
+const ExpressError = require("../utils/ExpressError.js");
+const { listingSchema } = require("../schema.js");
+const { isLoggedIn, isOwner, validatelisting } = require("../middleware.js");
+const { populate } = require("../models/reviews.js");
+const listingController = require("../controllers/listings.js");
+const multer = require('multer');
 
-const validatelisting=(req,res,next)=>{
-  let {error}=listingSchema.validate(req.body);
-         console.log(error);
-         if(error){
-            let errMsg=error.details.map((el)=>el.message).join(",")
-           throw new ExpressError(400,errMsg)
-         }
-         else{
-            next();
-         }
-};
+const path = require("path");
+// const {storage}=require("../cloudConfig.js");
 
+// Fallback to local storage since Cloudinary is not configured correctly
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'public/uploads/')
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+})
 
-
-//index route
- router.get("/",wrapAsync(async (req,res)=>{
- const allListings =   await listing.find({});
- res.render("listings/index.ejs",{ allListings})
-    
- }));
- //new route and create route
- router.get("/new",isLoggedIn,(req,res)=>{
-     res.render("listings/new.ejs")
- });
- //create route
- router.post("/",validatelisting ,isLoggedIn,
-    wrapAsync(async (req,res,next)=>{     
-        const newListing=   new listing(req.body.listing);
-         await newListing.save();
-         req.flash("success","New Listing created!")
-         res.redirect("/listings");
-     
-    }
-  ) );
-
- //show route
- router.get("/:id",wrapAsync( async (req,res)=>{
-    let {id}= req.params;
-    const Listing= await listing.findById(id).populate("reviews");
-    if(!Listing){
-      req.flash("error"," Listing Does Not Exist!")
-     return  res.redirect("/listings");
-    }
-    res.render("listings/show.ejs",{Listing});
-    
- }));
- //edit route
- router.get("/:id/edit",isLoggedIn,  wrapAsync(async (req,res)=>{
-
-    let {id}= req.params;
-   const Listing= await listing.findById(id);
-    if(!Listing){
-      req.flash("error"," Listing Does Not Exist!")
-     return  res.redirect("/listings");
-    }
-   res.render("listings/edit.ejs",{listing:Listing})
-
- }));
- //update route
- router.put("/:id" ,isLoggedIn,validatelisting,
-    wrapAsync(async (req,res)=>{
-    
-    let {id} =req.params;
-       await listing.findByIdAndUpdate(id,{...req.body.listing});
-       req.flash("success"," Listing Updated!")
-       res.redirect(`/listings/${id}`);
-    }
- ));
- //delete route
- router.delete("/:id",isLoggedIn,wrapAsync(async (req,res)=>{
-  let {id}=req.params;
-  let deleteListing=  await listing.findByIdAndDelete(id);
-  console.log(deleteListing);
-  req.flash("success","Listing Deleted!")
-  res.redirect("/listings");
-  }));
-  
+const upload = multer({ storage });
 
 
-module.exports=router;
+
+router.route("/")
+  .get(wrapAsync(listingController.index))
+  .post(isLoggedIn,
+    upload.single('listing[image]'), validatelisting,
+    wrapAsync(listingController.createListing));
+
+//new route and create route
+router.get("/new",
+  isLoggedIn,
+  listingController
+    .renderNewForm
+);
+
+router.get("/category/:category", async (req, res) => {
+  try {
+    const { category } = req.params;
+
+    const allListings = await listing.find({
+      category: { $regex: `^${category}$`, $options: "i" }
+    });
+
+    res.render("listings/index", {
+      allListings,
+      category,
+      noResults: allListings.length === 0,
+      search: null
+    });
+  } catch (err) {
+    console.log(err);
+    res.render("listings/index", {
+      allListings: [],
+      category: req.params.category,
+      noResults: true,
+      search: null
+    });
+  }
+});
+
+
+
+router.route("/:id")
+  .get(wrapAsync(listingController.showListing))
+  .put(
+    isLoggedIn,
+    isOwner,
+    upload.single("listing[image]"),
+    validatelisting,
+    wrapAsync(listingController.updateListing)
+  )
+
+  .delete(isLoggedIn, isOwner, wrapAsync(listingController.deleteListing));
+
+//edit route
+router.get("/:id/edit", isLoggedIn, isOwner, wrapAsync(listingController.renderEditForm));
+
+
+
+
+
+
+module.exports = router;
+
